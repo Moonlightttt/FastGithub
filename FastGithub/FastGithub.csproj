@@ -9,6 +9,11 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
   </PropertyGroup>
 
+  <PropertyGroup  >
+    
+    <OutputPath>bin/x</OutputPath>
+  </PropertyGroup>
+
   <ItemGroup>
     <PackageReference Include="PInvoke.AdvApi32" Version="0.7.104" />
     <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="5.0.1" />

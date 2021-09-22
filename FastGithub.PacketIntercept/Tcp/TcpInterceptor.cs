@@ -1,11 +1,10 @@
-﻿using Microsoft.Extensions.Logging;
+﻿using FastGithub.WinDiverts;
+using Microsoft.Extensions.Logging;
 using System;
-using System.Buffers.Binary;
 using System.Net;
 using System.Runtime.Versioning;
 using System.Threading;
 using System.Threading.Tasks;
-using WinDivertSharp;
 
 namespace FastGithub.PacketIntercept.Tcp
 {
@@ -16,8 +15,8 @@ namespace FastGithub.PacketIntercept.Tcp
     abstract class TcpInterceptor : ITcpInterceptor
     {
         private readonly string filter;
-        private readonly ushort oldServerPort;
-        private readonly ushort newServerPort;
+        private readonly int oldServerPort;
+        private readonly int newServerPort;
         private readonly ILogger logger;
 
         /// <summary>
@@ -29,8 +28,8 @@ namespace FastGithub.PacketIntercept.Tcp
         public TcpInterceptor(int oldServerPort, int newServerPort, ILogger logger)
         {
             this.filter = $"loopback and (tcp.DstPort == {oldServerPort} or tcp.SrcPort == {newServerPort})";
-            this.oldServerPort = BinaryPrimitives.ReverseEndianness((ushort)oldServerPort);
-            this.newServerPort = BinaryPrimitives.ReverseEndianness((ushort)newServerPort);
+            this.oldServerPort = oldServerPort;
+            this.newServerPort = newServerPort;
             this.logger = logger;
         }
 
@@ -47,26 +46,26 @@ namespace FastGithub.PacketIntercept.Tcp
 
             await Task.Yield();
 
-            var handle = WinDivert.WinDivertOpen(this.filter, WinDivertLayer.Network, 0, WinDivertOpenFlags.None);
+            var handle = WinDivert.WinDivertOpen(this.filter, WinDivertLayer.Network, 0, WinDivertOpenFlags.Default);
             if (handle == IntPtr.Zero)
             {
                 return;
             }
 
-            this.logger.LogInformation($"tcp://{IPAddress.Loopback}:{BinaryPrimitives.ReverseEndianness(this.oldServerPort)} => tcp://{IPAddress.Loopback}:{BinaryPrimitives.ReverseEndianness(this.newServerPort)}");
+            this.logger.LogInformation($"tcp://{IPAddress.Loopback}:{this.oldServerPort} => tcp://{IPAddress.Loopback}:{this.newServerPort}");
             cancellationToken.Register(hwnd => WinDivert.WinDivertClose((IntPtr)hwnd!), handle);
 
-            var packetLength = 0U;
+            var packetLength = 0;
             using var winDivertBuffer = new WinDivertBuffer();
             var winDivertAddress = new WinDivertAddress();
 
             while (cancellationToken.IsCancellationRequested == false)
             {
-                if (WinDivert.WinDivertRecv(handle, winDivertBuffer, ref winDivertAddress, ref packetLength))
+                if (WinDivert.WinDivertRecv(handle, winDivertBuffer, ref packetLength, ref winDivertAddress))
                 {
                     try
                     {
-                        this.ModifyTcpPacket(winDivertBuffer, ref winDivertAddress, ref packetLength);
+                        this.ModifyTcpPacket(winDivertBuffer, ref packetLength, ref winDivertAddress);
                     }
                     catch (Exception ex)
                     {
@@ -86,9 +85,14 @@ namespace FastGithub.PacketIntercept.Tcp
         /// <param name="winDivertBuffer"></param>
         /// <param name="winDivertAddress"></param>
         /// <param name="packetLength"></param> 
-        unsafe private void ModifyTcpPacket(WinDivertBuffer winDivertBuffer, ref WinDivertAddress winDivertAddress, ref uint packetLength)
+        unsafe private void ModifyTcpPacket(WinDivertBuffer winDivertBuffer, ref int packetLength, ref WinDivertAddress winDivertAddress)
         {
             var packet = WinDivert.WinDivertHelperParsePacket(winDivertBuffer, packetLength);
+            if (packet == null)
+            {
+                return;
+            }
+
             if (packet.TcpHeader->DstPort == oldServerPort)
             {
                 packet.TcpHeader->DstPort = this.newServerPort;
@@ -98,7 +102,7 @@ namespace FastGithub.PacketIntercept.Tcp
                 packet.TcpHeader->SrcPort = oldServerPort;
             }
             winDivertAddress.Impostor = true;
-            WinDivert.WinDivertHelperCalcChecksums(winDivertBuffer, packetLength, ref winDivertAddress, WinDivertChecksumHelperParam.All);
+            WinDivert.WinDivertHelperCalcChecksums(winDivertBuffer, packetLength, ref winDivertAddress, WinDivertChecksumFlags.All);
         }
     }
 }
